@@ -1,0 +1,196 @@
+---
+title: "R Notebook"
+output:
+  output: github_document
+  pdf_document: default
+  word_document: default
+  
+---
+
+##Load Packages
+
+```{r}
+library(ggplot2)
+library(forecast)
+library(plotly)
+library(ggfortify)
+library(tseries)
+library(gridExtra)
+library(docstring)
+library(readr)
+library(here)
+```
+
+###Get Data
+Now we collect our data. We want to use reliable sources of complete and accurate data. We collected 10 years (1995-2017) of S&P 500 Stock Index data at a monthly frequency (a total of 267 observations) from Yahoo Finance.
+
+
+```{r}
+data_master <- read.csv("C:/Users/samid/Desktop/course/FinTS/sp.csv")
+dim(data_master)
+#Creating time-series data object
+sp_500 <-ts(data_master$Open, start=c(1995, 1), freq=12)
+class(sp_500)
+```
+###Exploratory Analysis
+Now we want to get a feel for our data to get an intuition about the models that may be appropriate for our forecast. For this, we plot our data and diagnose for trend, seasonality, heteroskedasticity, and stationarity.
+
+
+```{r}
+plot.ts(sp_500)
+```
+Before we begin any analysis, we will be splitting the data to in 80:20 ratio to use as our test set.
+```{r}
+dt = sort(sample(nrow(data_master), nrow(data_master)*.8))
+train<-data_master[dt,]
+test<-data_master[-dt,]
+train<-ts(train$Open, freq=12)
+test<- ts(test$Open, freq=12) 
+```
+###Plotting our Time Series
+Plotting the data is arguably the most critical step in the exploratory analysis phase
+
+```{r}
+plot.ts(train)
+```
+We can quickly see that our time-series has instances of both positive and negative trend. Overall, it is very volatile, which tells us that we will have transform the data in order for the Box-Jenkins Methodology to predict with better accuracy.
+
+###Testing for Stationarity
+We will utilize a few statistical tests to test for stationarity. We must be weary of our model having a unit root, this will lead to non-stationary processes.
+
+```{r}
+Box.test(sp_500, lag = 20, type = 'Ljung-Box')
+```
+Now we will utilize the Augmented Dickey-Fuller Test for stationarity. The null hypothesis states that large p-values indicate non-stationarity and smaller p values indicate stationarity (We will be using 0.05 as our alpha value).
+
+```{r}
+adf.test(sp_500)
+```
+
+We can see our p-value for the ADF test is relatively high, so we'll do some further visual inspection. But we know we will most likely have to difference our time series for stationarity.
+
+###Decomposing our time-series
+Beyond understanding the trend of our time-series, we want to further understand the anatomy of our data. For this reason we break-down our time-series into its seasonal component, trend, and residuals.
+
+```{r}
+decom<-decompose(sp_500)
+plot(decom)
+```
+The trend line already shows us what we know and we can see that there might be some seasonality in our time series object.
+
+###Model Estimation
+Diagnosing the ACF and PACF Plots of our Time-Series Object
+```{r}
+acf(sp_500,'S&P 500')
+```
+```{r}
+pacf(sp_500,'S&P 500')
+```
+When there is large autocorrelation within our lagged values, we see geometric decay in our plots, which is a huge indicator that we will have to take the difference of our time series object.
+
+###Transforming our data to adjust for non-stationary
+
+```{r}
+tsDiff <- diff(sp_500)
+plot.ts(tsDiff)
+```
+
+This plot suggests that our working data is stationary. We want to confirm this running an ACF and PACF diagnostics over this data to find our if we can proceed to estimating a model.
+
+###Testing for Stationarity
+
+```{r}
+Box.test(tsDiff, lag = 20, type = 'Ljung-Box')
+adf.test(tsDiff)
+```
+
+We can see that the result yields a small p-value which makes us reject the null suggestion stationarity.
+
+###Diagnosing the acf and pacf of our transformed time-series object
+
+```{r}
+acf(tsDiff)
+```
+```{r}
+pacf(tsDiff)
+```
+
+###Build Model
+
+The auto.arima() method, found within the forecast package, yields the best model for a time-series based on Akaike-Information-Criterion (AIC). The AIC is a measurement of quality used across various models to find the best fit.
+
+
+
+```{r}
+fit<- auto.arima(sp_500)
+fit
+```
+```{r}
+fit1 <- Arima(sp_500, order = c(0,1,0),
+    include.drift = TRUE)
+summary(sp_500)
+```
+###Forecasting
+We proceed to forecasting now that we believe we found the appropriate model!
+
+```{r}
+for_sp500_all <- forecast(fit1, h = 12)
+plot(for_sp500_all)
+```
+```{r}
+autoplot(fit1,
+    holdout = sp_500, 
+    forc_name = 'ARIMA', 
+    ts_object_name = 'S&P 500')
+
+```
+
+#Other Forecasting Methods
+
+Box-Cox Forecast
+
+Box-Cox transformations are generally used to transform non-normally distributed data to become approximately normal! Although we do not think this an appropriate transformation for our data set, it is still included in our analysis because it's a useful transformation to do especially since most real time data is not approximately normally distributed.
+
+```{r}
+lambda <- BoxCox.lambda(sp_500)
+fit_sp500_BC <- ar(BoxCox(sp_500,lambda))
+fit_BC <- forecast(fit_sp500_BC,h=12,lambda=lambda)
+autoplot(fit_BC, 
+    holdout = sp_500,
+    forc_name = 'Box-Cox Transformation', 
+    ts_object_name = 'S&P 500')
+```
+
+##Exponential Smoothing Forecast
+
+The following forecasting method is far more complex than the previous methods. This forecasting method relies on weighted averages of past observations where the most recent observations hold higher weight!
+
+```{r}
+fit_ets <- forecast(ets(sp_500), h = 36)
+autoplot(fit_ets, 
+    holdout=sp_500,
+    forc_name = 'Exponential Smoothing',
+    ts_object_name = 'S&P 500')
+```
+###Naive Forecast
+The naive forecasting method returns an ARIMA(0, 1, 0) with random walk model that is applied to our time series object.
+
+```{r}
+fit_naive <- naive(sp_500, h = 12)
+autoplot(fit_naive, 
+    holdout = sp_500,
+    forc_name = 'Naive Forecast',
+    ts_object_name = 'S&P 500') 
+```
+###Conclusions
+
+The forecasting method we use to find the best model is recieving the lowest MAE and MAPE.
+We run the accuracy function on all the forecast methods and we check which performed best!
+
+```{r}
+#round(accuracy(fit1, sp_500), 3)
+#round(accuracy(fit_BC, sp_500), 3)
+#round(accuracy(fit_ets, sp_500), 3)
+#round(accuracy(fit_naive, sp_500), 3)
+```
+
